@@ -4,6 +4,34 @@ import sys
 import contextlib
 
 
+PRECEDENCE = [
+    [ast.Lambda],
+    [ast.IfExp],
+    [ast.Or],
+    [ast.And],
+    [ast.Not],
+    [ast.In, ast.NotIn, ast.Is, ast.IsNot, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+     ast.NotEq, ast.Eq],
+    [ast.BitOr],
+    [ast.BitXor],
+    [ast.BitAnd],
+    [ast.LShift, ast.RShift],
+    [ast.Add, ast.Sub],
+    [ast.Mult, ast.MatMult, ast.Div, ast.FloorDiv, ast.Mod],
+    [ast.UAdd, ast.USub, ast.Invert],
+    [ast.Pow],
+    [ast.Await],
+    [ast.Subscript, ast.Call, ast.Attribute],
+    [ast.Tuple, ast.List, ast.Dict, ast.Set],
+]
+
+
+def precedence(op):
+    for i in range(len(PRECEDENCE)):
+        if op in PRECEDENCE[i]:
+            return i
+
+
 class Visitor(ast.NodeVisitor):
     def __init__(self):
         self.output_line = 1
@@ -11,6 +39,7 @@ class Visitor(ast.NodeVisitor):
         self.first_line = 0
         self.last_line = float('inf')
         self.p_level = 0
+        self.precedence = [-1]
 
     def print(self, s, l, c):
         if self.output_line < l:
@@ -229,19 +258,28 @@ class Visitor(ast.NodeVisitor):
         self.write(')')
 
     @contextlib.contextmanager
-    def auto_parens(self, node, left, right):
+    def auto_parens(self, node, op, left, right):
+        prec = precedence(type(op))
         if (left.lineno != right.lineno and self.p_level == 0 and
                 (node.lineno, node.col_offset) >
                 (self.output_line, self.output_col)):
             self.write('(')
+            self.precedence.append(-1)
+            p = True
+            self.p_level += 1
+        elif self.precedence[-1] > prec:
+            self.write('(')
+            self.precedence.append(-1)
             p = True
             self.p_level += 1
         else:
+            self.precedence.append(prec)
             p = False
         yield
         if p:
             self.write(')')
             self.p_level -= 1
+        self.precedence.pop()
 
     def visit_BinOp(self, node):
         if self.make_fstring(node):
@@ -252,7 +290,7 @@ class Visitor(ast.NodeVisitor):
             ast.Add: '+',
             ast.Mult: '*',
         }
-        with self.auto_parens(node, node.left, node.right):
+        with self.auto_parens(node, node.op, node.left, node.right):
             self.visit(node.left)
             self.write(' %s ' % (ops.get(type(node.op), str(node.op)),))
             self.visit(node.right)
@@ -288,7 +326,7 @@ class Visitor(ast.NodeVisitor):
             ast.And: ' and ',
             ast.Or: ' or ',
         }
-        with self.auto_parens(node, node.values[0], node.values[-1]):
+        with self.auto_parens(node, node.op, node.values[0], node.values[-1]):
             for i, v in enumerate(node.values):
                 if i:
                     self.write(ops[type(node.op)])
