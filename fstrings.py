@@ -92,15 +92,19 @@ class Visitor(ast.NodeVisitor):
 
     def visit_With(self, node):
         self.print('with ', node.lineno, node.col_offset)
-        # self.visit(node.test)
-        self.write(str(node.items))
+        for v in node.items:
+            self.visit(v.context_expr)
+            if v.optional_vars:
+                self.write(' as ')
+                self.visit(v.optional_vars)
         self.write(':')
         for child in node.body:
             self.visit(child)
 
     def visit_If(self, node, keyword='if', col=None):
-        self.print(keyword + ' ', node.lineno,
-                   node.col_offset if col is None else col)
+        if col is None:
+            col = node.col_offset
+        self.print(keyword + ' ', node.lineno, col)
         self.visit(node.test)
         self.write(':')
         for child in node.body:
@@ -108,11 +112,35 @@ class Visitor(ast.NodeVisitor):
         if len(node.orelse) > 0:
             if (len(node.orelse) == 1 and
                     isinstance(node.orelse[0], ast.If)):
-                self.visit_If(node.orelse[0], 'elif', node.col_offset)
+                self.visit_If(node.orelse[0], 'elif', col)
             else:
-                self.print('else:', self.output_line + 1, node.col_offset)
+                self.print('else:', self.output_line + 1, col)
                 for tail in node.orelse:
                     self.visit(tail)
+
+    def visit_Try(self, node):
+        self.print('try:', node.lineno, node.col_offset)
+        for child in node.body:
+            self.visit(child)
+        for excepthandler in node.handlers:
+            self.print('except',
+                       excepthandler.lineno, excepthandler.col_offset)
+            if excepthandler.type:
+                self.visit(excepthandler.type)
+            if excepthandler.name:
+                self.write(' as ')
+                self.write(excepthandler.name)
+            self.write(':')
+            for child in excepthandler.body:
+                self.visit(child)
+        if node.orelse:
+            self.print('else:', self.output_line + 1, node.col_offset)
+            for tail in node.orelse:
+                self.visit(tail)
+        if node.finalbody:
+            self.print('finally:', self.output_line + 1, node.col_offset)
+            for tail in node.finalbody:
+                self.visit(tail)
 
     def visit_For(self, node):
         self.print('for ', node.lineno, node.col_offset)
@@ -135,11 +163,19 @@ class Visitor(ast.NodeVisitor):
                 self.write(',')
             self.visit(arg)
 
+    def visit_Pass(self, node):
+        self.print('pass', node.lineno, node.col_offset)
+
     def visit_Expr(self, node):
         self.visit(node.value)
 
     def visit_Return(self, node):
         self.print('return', node.lineno, node.col_offset)
+        if node.value:
+            self.visit(node.value)
+
+    def visit_Yield(self, node):
+        self.print('yield', node.lineno, node.col_offset)
         if node.value:
             self.visit(node.value)
 
@@ -159,6 +195,22 @@ class Visitor(ast.NodeVisitor):
             self.write(' = ')
         self.visit(node.value)
 
+    def visit_AugAssign(self, node):
+        ops = {
+            ast.Mod: '%',
+            ast.Sub: '-',
+            ast.Add: '+',
+            ast.Mult: '*',
+        }
+        if isinstance(node.target, ast.Tuple):
+            node.target.col_offset = node.col_offset + 1  # for Tuple
+        self.visit(node.target)
+        self.write(' ')
+        self.write(ops.get(type(node.op), str(node.op)))
+        self.write('=')
+        self.write(' ')
+        self.visit(node.value)
+
     def visit_Call(self, node):
         self.visit(node.func)
         self.write('(')
@@ -176,15 +228,9 @@ class Visitor(ast.NodeVisitor):
 
         self.write(')')
 
-    def visit_BinOp(self, node):
-        if self.make_fstring(node):
-            return
-        ops = {
-            ast.Mod: '%',
-            ast.Sub: '-',
-            ast.Add: '+',
-        }
-        if (node.left.lineno != node.right.lineno and self.p_level == 0 and
+    @contextlib.contextmanager
+    def auto_parens(self, node, left, right):
+        if (left.lineno != right.lineno and self.p_level == 0 and
                 (node.lineno, node.col_offset) >
                 (self.output_line, self.output_col)):
             self.write('(')
@@ -192,12 +238,33 @@ class Visitor(ast.NodeVisitor):
             self.p_level += 1
         else:
             p = False
-        self.visit(node.left)
-        self.write(' %s ' % (ops.get(type(node.op), '?'),))
-        self.visit(node.right)
+        yield
         if p:
             self.write(')')
             self.p_level -= 1
+
+    def visit_BinOp(self, node):
+        if self.make_fstring(node):
+            return
+        ops = {
+            ast.Mod: '%',
+            ast.Sub: '-',
+            ast.Add: '+',
+            ast.Mult: '*',
+        }
+        with self.auto_parens(node, node.left, node.right):
+            self.visit(node.left)
+            self.write(' %s ' % (ops.get(type(node.op), str(node.op)),))
+            self.visit(node.right)
+
+    def visit_UnaryOp(self, node):
+        ops = {
+            ast.USub: '-',
+            ast.UAdd: '+',
+        }
+        self.print(ops.get(type(node.op), str(node.op)),
+                   node.lineno, node.col_offset)
+        self.visit(node.operand)
 
     def visit_Compare(self, node):
         self.visit(node.left)
@@ -208,11 +275,30 @@ class Visitor(ast.NodeVisitor):
             ast.GtE: '>=',
             ast.Eq: '==',
             ast.NotEq: '!=',
-            ast.In: 'in',
+            ast.In: ' in ',
+            ast.Is: ' is ',
+            ast.IsNot: ' is not ',
         }
         for op, right in zip(node.ops, node.comparators):
             self.write(' %s ' % (ops.get(type(op), '?'),))
             self.visit(right)
+
+    def visit_BoolOp(self, node):
+        ops = {
+            ast.And: ' and ',
+            ast.Or: ' or ',
+        }
+        with self.auto_parens(node, node.values[0], node.values[-1]):
+            for i, v in enumerate(node.values):
+                if i:
+                    self.write(ops[type(node.op)])
+                self.visit(v)
+
+    def visit_Lambda(self, node):
+        self.print('lambda', node.lineno, node.col_offset)
+        self.visit_arguments(node.args)
+        self.write(':')
+        self.visit(node.body)
 
     @staticmethod
     def escape_string_part(s):
@@ -295,6 +381,13 @@ class Visitor(ast.NodeVisitor):
     def visit_Index(self, node):
         self.visit(node.value)
 
+    def visit_IfExp(self, node):
+        self.visit(node.body)
+        self.write(' if ')
+        self.visit(node.test)
+        self.write(' else ')
+        self.visit(node.orelse)
+
     def visit_Slice(self, node):
         if node.lower:
             self.visit(node.lower)
@@ -337,6 +430,15 @@ class Visitor(ast.NodeVisitor):
         self.print('[', node.lineno, node.col_offset)
         self.visit_commasep(node.elts)
         self.write(']')
+
+    def visit_Dict(self, node):
+        self.print('{', node.lineno, node.col_offset)
+        for k, v in zip(node.keys, node.values):
+            self.visit(k)
+            self.write(': ')
+            self.visit(v)
+            self.write(',')
+        self.write('}')
 
 
 def main():
