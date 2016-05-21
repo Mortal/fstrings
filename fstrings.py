@@ -8,6 +8,9 @@ class Visitor(ast.NodeVisitor):
     def __init__(self):
         self.output_line = 1
         self.output_col = 0
+        self.first_line = 0
+        self.last_line = float('inf')
+        self.p_level = 0
 
     def print(self, s, l, c):
         if self.output_line < l:
@@ -17,13 +20,15 @@ class Visitor(ast.NodeVisitor):
         self.write(s)
 
     def write(self, s):
-        sys.stdout.write(s)
-        lines = s.split('\n')
-        if len(lines) <= 1:
-            self.output_col += len(s)
-        else:
-            self.output_line += len(lines) - 1
-            self.output_col = len(lines[-1])
+        lines = s.splitlines(True)
+        for line in lines:
+            if self.first_line <= self.output_line <= self.last_line:
+                sys.stdout.write(line)
+            if line.endswith('\n'):
+                self.output_line += 1
+                self.output_col = 0
+            else:
+                self.output_col += len(line)
 
     def visit(self, node):
         try:
@@ -50,6 +55,16 @@ class Visitor(ast.NodeVisitor):
         for child in node.body:
             self.visit(child)
 
+    def visit_Import(self, node):
+        self.print('import ', node.lineno, node.col_offset)
+        for i, n in enumerate(node.names):
+            if i:
+                self.write(', ')
+            self.write(n.name)
+            if n.asname:
+                self.write(' as ')
+                self.write(n.asname)
+
     def visit_FunctionDef(self, node):
         self.print('def ', node.lineno, node.col_offset)
         self.write(node.name)
@@ -59,24 +74,98 @@ class Visitor(ast.NodeVisitor):
         for child in node.body:
             self.visit(child)
 
+    def visit_ClassDef(self, node):
+        self.print('class ', node.lineno, node.col_offset)
+        self.write(node.name)
+        self.write('(')
+        self.visit_commasep(node.bases)
+        self.write('):')
+        for child in node.body:
+            self.visit(child)
+
+    def visit_While(self, node):
+        self.print('while ', node.lineno, node.col_offset)
+        self.visit(node.test)
+        self.write(':')
+        for child in node.body:
+            self.visit(child)
+
+    def visit_With(self, node):
+        self.print('with ', node.lineno, node.col_offset)
+        # self.visit(node.test)
+        self.write(str(node.items))
+        self.write(':')
+        for child in node.body:
+            self.visit(child)
+
+    def visit_If(self, node, keyword='if', col=None):
+        self.print(keyword + ' ', node.lineno,
+                   node.col_offset if col is None else col)
+        self.visit(node.test)
+        self.write(':')
+        for child in node.body:
+            self.visit(child)
+        if len(node.orelse) > 0:
+            if (len(node.orelse) == 1 and
+                    isinstance(node.orelse[0], ast.If)):
+                self.visit_If(node.orelse[0], 'elif', node.col_offset)
+            else:
+                self.print('else:', self.output_line + 1, node.col_offset)
+                for tail in node.orelse:
+                    self.visit(tail)
+
+    def visit_For(self, node):
+        self.print('for ', node.lineno, node.col_offset)
+        self.visit(node.target)
+        self.write(' in ')
+        self.visit(node.iter)
+        self.write(':')
+        for child in node.body:
+            self.visit(child)
+
     def visit_arguments(self, args):
         for i, a in enumerate(args.args):
             if i:
                 self.write(',')
             self.print(a.arg, a.lineno, a.col_offset)
 
+    def visit_commasep(self, elts):
+        for i, arg in enumerate(elts):
+            if i:
+                self.write(',')
+            self.visit(arg)
+
     def visit_Expr(self, node):
+        self.visit(node.value)
+
+    def visit_Return(self, node):
+        self.print('return', node.lineno, node.col_offset)
+        if node.value:
+            self.visit(node.value)
+
+    def visit_Raise(self, node):
+        self.print('raise', node.lineno, node.col_offset)
+        if node.exc:
+            self.visit(node.exc)
+        if node.cause:
+            self.write(' from')
+            self.visit(node.cause)
+
+    def visit_Assign(self, node):
+        for t in node.targets:
+            if isinstance(t, ast.Tuple):
+                t.col_offset = node.col_offset + 1  # for Tuple
+            self.visit(t)
+            self.write(' = ')
         self.visit(node.value)
 
     def visit_Call(self, node):
         self.visit(node.func)
         self.write('(')
-        for i, arg in enumerate(node.args):
-            if i:
-                self.write(',')
-            self.visit(arg)
-
-        for j, (k, v) in enumerate(node.keywords):
+        self.visit_commasep(node.args)
+        for j, kw in enumerate(node.keywords):
+            k = kw.arg
+            v = kw.value
             if j or node.args:
                 self.write(',')
             if k is None:
@@ -92,10 +181,38 @@ class Visitor(ast.NodeVisitor):
             return
         ops = {
             ast.Mod: '%',
+            ast.Sub: '-',
+            ast.Add: '+',
         }
+        if (node.left.lineno != node.right.lineno and self.p_level == 0 and
+                (node.lineno, node.col_offset) >
+                (self.output_line, self.output_col)):
+            self.write('(')
+            p = True
+            self.p_level += 1
+        else:
+            p = False
         self.visit(node.left)
         self.write(' %s ' % (ops.get(type(node.op), '?'),))
         self.visit(node.right)
+        if p:
+            self.write(')')
+            self.p_level -= 1
+
+    def visit_Compare(self, node):
+        self.visit(node.left)
+        ops = {
+            ast.Lt: '<',
+            ast.Gt: '>',
+            ast.LtE: '<=',
+            ast.GtE: '>=',
+            ast.Eq: '==',
+            ast.NotEq: '!=',
+            ast.In: 'in',
+        }
+        for op, right in zip(node.ops, node.comparators):
+            self.write(' %s ' % (ops.get(type(op), '?'),))
+            self.visit(right)
 
     @staticmethod
     def escape_string_part(s):
@@ -105,10 +222,12 @@ class Visitor(ast.NodeVisitor):
     def capture_write(self, f):
         l, c = self.output_line, self.output_col
         old_write, self.write = self.write, f
+        old_print, self.print = self.print, (lambda s, l, c: self.write(s))
         try:
             yield
         finally:
             self.write = old_write
+            self.print = old_print
             self.output_line, self.output_col = l, c
 
     def make_fstring(self, node):
@@ -143,12 +262,12 @@ class Visitor(ast.NodeVisitor):
             res.append(node.left.s[i:])
             if arguments:
                 return
-            self.write('f\'')
+            self.print('f\'', node.lineno, node.col_offset)
             for part in res:
                 if isinstance(part, str):
                     self.write(self.escape_string_part(part))
                 else:
-                    a, t = part
+                    (a, t) = part
                     self.write('{')
                     a.lineno = self.output_line
                     a.col_offset = self.output_col
@@ -162,14 +281,44 @@ class Visitor(ast.NodeVisitor):
             self.write('\'')
             return True
 
+    def visit_Attribute(self, node):
+        self.visit(node.value)
+        self.write('.')
+        self.write(node.attr)
+
+    def visit_Subscript(self, node):
+        self.visit(node.value)
+        self.write('[')
+        self.visit(node.slice)
+        self.write(']')
+
+    def visit_Index(self, node):
+        self.visit(node.value)
+
+    def visit_Slice(self, node):
+        if node.lower:
+            self.visit(node.lower)
+        self.write(':')
+        if node.upper:
+            self.visit(node.upper)
+        if node.step:
+            self.write(':')
+            self.visit(node.step)
+
     def visit_Name(self, node):
         self.print(node.id, node.lineno, node.col_offset)
+
+    def visit_NameConstant(self, node):
+        self.print(repr(node.value), node.lineno, node.col_offset)
 
     def visit_Num(self, node):
         self.print(repr(node.n), node.lineno, node.col_offset)
 
     def visit_Str(self, node):
         self.print(repr(node.s), node.lineno, node.col_offset)
+
+    def visit_JoinedStr(self, node):
+        self.print(repr(node.values), node.lineno, node.col_offset)
 
     def visit_Tuple(self, node):
         if len(node.elts) > 0:
@@ -184,11 +333,25 @@ class Visitor(ast.NodeVisitor):
         else:
             self.print('()', node.lineno, node.col_offset)
 
+    def visit_List(self, node):
+        self.print('[', node.lineno, node.col_offset)
+        self.visit_commasep(node.elts)
+        self.write(']')
+
 
 def main():
     s = sys.stdin.read()
     o = ast.parse(s)
     v = Visitor()
+    try:
+        a, b = sys.argv[1:]
+        a = int(a)
+        b = int(b)
+    except ValueError:
+        pass
+    else:
+        v.first_line = a
+        v.last_line = b
     v._source_lines = s.splitlines()
     v.visit(o)
     if v.output_col > 0:
