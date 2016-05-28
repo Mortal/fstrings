@@ -181,10 +181,13 @@ class Visitor(ast.NodeVisitor):
             self.visit(child)
 
     def visit_arguments(self, args):
-        for i, a in enumerate(args.args):
+        for i, (a, d) in enumerate(zip(args.args, args.defaults)):
             if i:
                 self.write(',')
             self.print(a.arg, a.lineno, a.col_offset)
+            if d is not None:
+                self.write('=')
+                self.visit(d)
 
     def visit_commasep(self, elts):
         for i, arg in enumerate(elts):
