@@ -1,3 +1,15 @@
+"""
+>>> s = '''\\
+... def say(greeting='hello', target='world'):
+...     print("%s%s, %s!" % (greeting[0].upper(), greeting[1:], target))
+... '''
+>>> o = ast.parse(s)
+>>> v = Visitor()
+>>> v.visit(o)
+def say(greeting='hello', target='world'):
+    print(f'{greeting[0].upper()}{greeting[1:]}, {target}!')
+"""
+
 import re
 import ast
 import sys
