@@ -248,6 +248,9 @@ class Visitor(ast.NodeVisitor):
             ast.Sub: '-',
             ast.Add: '+',
             ast.Mult: '*',
+            ast.Pow: '**',
+            ast.Div: '/',
+            ast.FloorDiv: '//',
         }
         if isinstance(node.target, ast.Tuple):
             node.target.col_offset = node.col_offset + 1  # for Tuple
@@ -307,6 +310,9 @@ class Visitor(ast.NodeVisitor):
             ast.Sub: '-',
             ast.Add: '+',
             ast.Mult: '*',
+            ast.Pow: '**',
+            ast.Div: '/',
+            ast.FloorDiv: '//',
         }
         with self.auto_parens(node, node.op, node.left, node.right):
             self.visit(node.left)
