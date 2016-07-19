@@ -210,6 +210,12 @@ class Visitor(ast.NodeVisitor):
                 self.write(',')
             self.visit(arg)
 
+    def visit_Break(self, node):
+        self.print('break', node.lineno, node.col_offset)
+
+    def visit_Continue(self, node):
+        self.print('continue', node.lineno, node.col_offset)
+
     def visit_Pass(self, node):
         self.print('pass', node.lineno, node.col_offset)
 
