@@ -395,8 +395,8 @@ class Visitor(ast.NodeVisitor):
             pattern = (
                 r'%(?P<key>\([^)]*\))?' +
                 r'(?P<flag>[#0 +-]*)' +
-                r'(?P<width>\*|\d+)?' +
-                r'(?:\.(?P<prec>\*|\d+))?' +
+                r'(?P<widthprec>(?P<width>\*|\d+)?' +
+                r'(?:\.(?P<prec>\*|\d+))?)' +
                 r'(?P<length>[hlL])?' +
                 r'(?P<type>.)')
             conversions = re.finditer(pattern, node.left.s)
@@ -409,8 +409,13 @@ class Visitor(ast.NodeVisitor):
                 t = mo.group('type')
                 if t == '%':
                     res.append('%')
-                elif t in ('s', 'r'):
-                    res.append((arguments.pop(0), t))
+                elif t == 's':
+                    res.append((arguments.pop(0), ''))
+                elif t == 'r':
+                    res.append((arguments.pop(0), '!r'))
+                elif t in ('d', 'e', 'f', 'g'):
+                    res.append((arguments.pop(0),
+                                ':' + mo.group('widthprec') + t))
                 else:
                     return
             res.append(node.left.s[i:])
@@ -429,8 +434,7 @@ class Visitor(ast.NodeVisitor):
                     with self.capture_write(a_.append):
                         self.visit(a)
                     self.write(self.escape_string_part(''.join(a_)))
-                    if t != 's':
-                        self.write('!' + t)
+                    self.write(t)
                     self.write('}')
             self.write('\'')
             return True
