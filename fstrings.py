@@ -470,6 +470,12 @@ class Visitor(ast.NodeVisitor):
             self.write(':')
             self.visit(node.step)
 
+    def visit_ExtSlice(self, node):
+        for i, s in enumerate(node.dims):
+            if i:
+                self.write(', ')
+            self.visit(s)
+
     def visit_Name(self, node):
         self.print(node.id, node.lineno, node.col_offset)
 
