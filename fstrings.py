@@ -60,6 +60,9 @@ class Visitor(ast.NodeVisitor):
             self.write(' ' * (c - self.output_col))
         self.write(s)
 
+    def print_before(self, s, l, c):
+        self.print(s, l, max(0, c - len(s)))
+
     def write(self, s):
         lines = s.splitlines(True)
         for line in lines:
@@ -265,9 +268,9 @@ class Visitor(ast.NodeVisitor):
             if j or node.args:
                 self.write(',')
             if k is None:
-                self.write('**')
+                self.print_before('**', v.lineno, v.col_offset)
             else:
-                self.write(k + '=')
+                self.print_before(k + '=', v.lineno, v.col_offset)
             self.visit(v)
 
         self.write(')')
