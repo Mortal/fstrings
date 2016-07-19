@@ -90,7 +90,7 @@ class Visitor(ast.NodeVisitor):
             print(' ' * col_offset + '^', file=file)
 
     def generic_visit(self, node):
-        self.print(str(node), node.lineno, node.col_offset)
+        self.print(str(node), getattr(node, 'lineno', 0), getattr(node, 'col_offset', 0))
 
     def visit_Module(self, node):
         for child in node.body:
